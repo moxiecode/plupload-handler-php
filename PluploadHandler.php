@@ -76,18 +76,12 @@ class PluploadHandler {
 			'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
 			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : uniqid('file_'),
 			'allow_extensions' => false,
-			'allow_origin' => false,
 			'delay' => 0
 		), $conf);
 
 		self::$_error = null; // start fresh
 
 		try {
-			// Check if target dir exists and is writeable
-			if (!file_exists(self::$conf['target_dir']) && !@mkdir(self::$conf['target_dir'])) {
-				throw new Exception('', PLUPLOAD_TMPDIR_ERR);
-			}
-
 			// Cleanup outdated temp files and folders
 			if (self::$conf['cleanup']) {
 				self::cleanup();
@@ -117,23 +111,18 @@ class PluploadHandler {
 			$tmp_path = $file_path . ".part";
 
 			// Write file or chunk to appropriate temp location
-			if (self::$conf['chunks']) {
-				$chunk_dir = $file_path . "_d.part";
-				if (!file_exists($chunk_dir)) {
-					@mkdir($chunk_dir);
-				}
-				
-				self::write_file_to($chunk_dir . DIRECTORY_SEPARATOR . self::$conf['chunk']);
+			if (self::$conf['chunks']) {				
+				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . self::$conf['chunk']);
 
 				// Check if all chunks already uploaded
 				if (self::$conf['chunks'] == self::$conf['chunk'] - 1) { 
-					self::write_chunks_to_file($chunk_dir, $tmp_path);
+					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
 				}
 			} else {
 				self::write_file_to($tmp_path);
 			}
 
-			// Finalize
+			// Upload complete write a temp file to the final destination
 			if (!self::$conf['chunks'] || self::$conf['chunks'] == self::$conf['chunk'] - 1) {
 				rename($tmp_path, $file_path);
 			}
@@ -159,6 +148,11 @@ class PluploadHandler {
 	{
 		if (!$file_data_name) {
 			$file_data_name = self::$config['file_data_name'];
+		}
+
+		$base_dir = dirname($file_path);
+		if (!file_exists($base_dir) && !@mkdir($base_dir, 0777, true)) {
+			throw new Exception('', PLUPLOAD_TMPDIR_ERR);
 		}
 
 		if (!empty($_FILES)) {
