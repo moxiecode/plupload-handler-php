@@ -11,12 +11,11 @@ define('PLUPLOAD_UNKNOWN_ERR', 111);
 
 class PluploadHandler {
 
-	public $conf;
+	public static $conf;
 
-	private $_error = null;
+	private static $_error = null;
 
-
-	private $_errors = array(
+	private static $_errors = array(
 		PLUPLOAD_MOVE_ERR => "Failed to move uploaded file.",
 		PLUPLOAD_INPUT_ERR => "Failed to open input stream.",
 		PLUPLOAD_OUTPUT_ERR => "Failed to open output stream.",
@@ -31,7 +30,7 @@ class PluploadHandler {
 	 *
 	 * @return int Error code
 	 */
-	function get_error_code()
+	static function get_error_code()
 	{
 		if (!self::$_error) {
 			return null;
@@ -50,7 +49,7 @@ class PluploadHandler {
 	 *
 	 * @return string Error message
 	 */
-	function get_error_message()
+	static function get_error_message()
 	{
 		if ($code = self::get_error_code()) {
 			return self::$_errors[$code];
@@ -62,7 +61,7 @@ class PluploadHandler {
 	/**
 	 * 
 	 */
-	function handle($conf = array())
+	static function handle($conf = array())
 	{
 		// 5 minutes execution time
 		@set_time_limit(5 * 60);
@@ -96,13 +95,11 @@ class PluploadHandler {
 
 			// Check if file type is allowed
 			if (self::$conf['allow_extensions']) {
-				$ext = pathinfo($file_name, PATHINFO_EXTENSION);
-
 				if (is_string(self::$conf['allow_extensions'])) {
 					self::$conf['allow_extensions'] = preg_split('{\s*,\s*}', self::$conf['allow_extensions']);
 				}
 
-				if (!in_array($ext, self::$conf['allow_extensions'])) {
+				if (!in_array(pathinfo($file_name, PATHINFO_EXTENSION), self::$conf['allow_extensions'])) {
 					throw new Exception('', PLUPLOAD_TYPE_ERR);
 				}
 			}
@@ -115,7 +112,7 @@ class PluploadHandler {
 				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . self::$conf['chunk']);
 
 				// Check if all chunks already uploaded
-				if (self::$conf['chunks'] == self::$conf['chunk'] - 1) { 
+				if (self::$conf['chunk'] == self::$conf['chunks'] - 1) { 
 					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
 				}
 			} else {
@@ -123,7 +120,7 @@ class PluploadHandler {
 			}
 
 			// Upload complete write a temp file to the final destination
-			if (!self::$conf['chunks'] || self::$conf['chunks'] == self::$conf['chunk'] - 1) {
+			if (!self::$conf['chunks'] || self::$conf['chunk'] == self::$conf['chunks'] - 1) {
 				rename($tmp_path, $file_path);
 			}
 		} catch (Exception $ex) {
@@ -144,10 +141,10 @@ class PluploadHandler {
 	 * @param string $file_path The path to write the file to
 	 * @param string [$file_data_name='file'] The name of the multipart field
 	 */
-	function write_file_to($file_path, $file_data_name = false)
+	static function write_file_to($file_path, $file_data_name = false)
 	{
 		if (!$file_data_name) {
-			$file_data_name = self::$config['file_data_name'];
+			$file_data_name = self::$conf['file_data_name'];
 		}
 
 		$base_dir = dirname($file_path);
@@ -155,7 +152,7 @@ class PluploadHandler {
 			throw new Exception('', PLUPLOAD_TMPDIR_ERR);
 		}
 
-		if (!empty($_FILES)) {
+		if (!empty($_FILES) && isset($_FILES[$file_data_name])) {
 			if ($_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
 				throw new Exception('', PLUPLOAD_MOVE_ERR);
 			}
@@ -188,7 +185,7 @@ class PluploadHandler {
 	 * @param string $chunk_dir Temp directory with the chunks
 	 * @param string $file_path The file to write the chunks to
 	 */
-	function write_chunks_to_file($chunk_dir, $file_path)
+	static function write_chunks_to_file($chunk_dir, $file_path)
 	{
 		if (!$out = @fopen($file_path, "wb")) {
 			throw new Exception('', PLUPLOAD_OUTPUT_ERR);
@@ -216,7 +213,7 @@ class PluploadHandler {
 	}
 
 
-	function no_cache_headers() 
+	static function no_cache_headers() 
 	{
 		// Make sure this file is not cached (as it might happen on iOS devices, for example)
 		header("Expires: Mon, 26 Jul 1997 05:00:00 GMT");
@@ -227,17 +224,21 @@ class PluploadHandler {
 	}
 
 
-	function cors_headers($headers = array(), $origin = '*')
+	static function cors_headers($headers = array(), $origin = '*')
 	{
+		$allow_origin_present = false;
+
 		if (!empty($headers)) {
-			foreach ($headers as &$header => $value) {
-				$header = strtolower($header); // normalize
+			foreach ($headers as $header => $value) {
+				if (strtolower($header) == 'access-control-allow-origin') {
+					$allow_origin_present = true;
+				}
 				header("$header: $value");
 			}
+		}
 
-			if ($origin && !array_key_exists('access-control-allow-origin', $headers)) {
-				header("access-control-allow-origin: $origin");
-			}
+		if ($origin && !$allow_origin_present) {
+			header("Access-Control-Allow-Origin: $origin");
 		}
 
 		// other CORS headers if any...
@@ -247,17 +248,19 @@ class PluploadHandler {
 	}
 
 
-	private function cleanup() 
+	private static function cleanup() 
 	{
 		// Remove old temp files	
-		foreach(glob(self::$_target_dir . '/*.part') as $tmpFile) {
-			if (time() - filemtime($tmpFile) < self::$_max_file_age) {
-				continue;
-			}
-			if (is_dir($tmpFile)) {
-				self::rrmdir($tmpFile);
-			} else {
-				@unlink($tmpFile);
+		if (file_exists(self::$conf['target_dir'])) {
+			foreach(glob(self::$conf['target_dir'] . '/*.part') as $tmpFile) {
+				if (time() - filemtime($tmpFile) < self::$conf['max_file_age']) {
+					continue;
+				}
+				if (is_dir($tmpFile)) {
+					self::rrmdir($tmpFile);
+				} else {
+					@unlink($tmpFile);
+				}
 			}
 		}
 	}
@@ -277,7 +280,7 @@ class PluploadHandler {
 	 * @param string $filename The filename to be sanitized
 	 * @return string The sanitized filename
 	 */
-	private function sanitize_file_name($filename) 
+	private static function sanitize_file_name($filename) 
 	{
 	    $special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
 	    $filename = str_replace($special_chars, '', $filename);
@@ -293,7 +296,7 @@ class PluploadHandler {
 	 *
 	 * @param string $dir Directory to remove
 	 */
-	private function rrmdir($dir) 
+	private static function rrmdir($dir) 
 	{
 		foreach(glob($dir . '/*') as $file) {
 			if(is_dir($file))
