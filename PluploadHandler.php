@@ -233,14 +233,16 @@ class PluploadHandler {
 	}
 
 
-	function cors_headers($origin = '*', $headers = array())
+	function cors_headers($headers = array(), $origin = '*')
 	{
-		// Support CORS
-		header("Access-Control-Allow-Origin: $origin");
-
 		if (!empty($headers)) {
-			foreach ($headers as $header => $value) {
+			foreach ($headers as &$header => $value) {
+				$header = strtolower($header); // normalize
 				header("$header: $value");
+			}
+
+			if ($origin && !array_key_exists('access-control-allow-origin', $headers)) {
+				header("access-control-allow-origin: $origin");
 			}
 		}
 
