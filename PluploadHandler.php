@@ -66,7 +66,7 @@ class PluploadHandler {
 		// 5 minutes execution time
 		@set_time_limit(5 * 60);
 
-		self::$conf = array_merge(array(
+		$conf = self::$conf = array_merge(array(
 			'file_data_name' => 'file',
 			'target_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
 			'cleanup' => true,
@@ -82,37 +82,37 @@ class PluploadHandler {
 
 		try {
 			// Cleanup outdated temp files and folders
-			if (self::$conf['cleanup']) {
+			if ($conf['cleanup']) {
 				self::cleanup();
 			}
 
 			// Fake network congestion
-			if (self::$conf['delay']) {
-				usleep(self::$conf['delay']);
+			if ($conf['delay']) {
+				usleep($conf['delay']);
 			}
 
-			$file_name = self::sanitize_file_name(self::$conf['file_name']);
+			$file_name = self::sanitize_file_name($conf['file_name']);
 
 			// Check if file type is allowed
-			if (self::$conf['allow_extensions']) {
-				if (is_string(self::$conf['allow_extensions'])) {
-					self::$conf['allow_extensions'] = preg_split('{\s*,\s*}', self::$conf['allow_extensions']);
+			if ($conf['allow_extensions']) {
+				if (is_string($conf['allow_extensions'])) {
+					$conf['allow_extensions'] = preg_split('{\s*,\s*}', $conf['allow_extensions']);
 				}
 
-				if (!in_array(pathinfo($file_name, PATHINFO_EXTENSION), self::$conf['allow_extensions'])) {
+				if (!in_array(pathinfo($file_name, PATHINFO_EXTENSION), $conf['allow_extensions'])) {
 					throw new Exception('', PLUPLOAD_TYPE_ERR);
 				}
 			}
 
-			$file_path = rtrim(self::$conf['target_dir'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file_name;
+			$file_path = rtrim($conf['target_dir'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file_name;
 			$tmp_path = $file_path . ".part";
 
 			// Write file or chunk to appropriate temp location
-			if (self::$conf['chunks']) {				
-				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . self::$conf['chunk']);
+			if ($conf['chunks']) {				
+				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . $conf['chunk']);
 
 				// Check if all chunks already uploaded
-				if (self::$conf['chunk'] == self::$conf['chunks'] - 1) { 
+				if ($conf['chunk'] == $conf['chunks'] - 1) { 
 					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
 				}
 			} else {
@@ -120,7 +120,7 @@ class PluploadHandler {
 			}
 
 			// Upload complete write a temp file to the final destination
-			if (!self::$conf['chunks'] || self::$conf['chunk'] == self::$conf['chunks'] - 1) {
+			if (!$conf['chunks'] || $conf['chunk'] == $conf['chunks'] - 1) {
 				rename($tmp_path, $file_path);
 			}
 		} catch (Exception $ex) {
