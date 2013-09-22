@@ -7,6 +7,7 @@ define('PLUPLOAD_OUTPUT_ERR', 102);
 define('PLUPLOAD_TMPDIR_ERR', 100);
 define('PLUPLOAD_TYPE_ERR', 104);
 define('PLUPLOAD_UNKNOWN_ERR', 111);
+define('PLUPLOAD_SECURITY_ERR', 105);
 
 
 class PluploadHandler {
@@ -21,7 +22,8 @@ class PluploadHandler {
 		PLUPLOAD_OUTPUT_ERR => "Failed to open output stream.",
 		PLUPLOAD_TMPDIR_ERR => "Failed to open temp directory.",
 		PLUPLOAD_TYPE_ERR => "File type not allowed.",
-		PLUPLOAD_UNKNOWN_ERR => "Failed due to unknown error."
+		PLUPLOAD_UNKNOWN_ERR => "Failed due to unknown error.",
+		PLUPLOAD_SECURITY_ERR => "File didn't pass security check."
 	);
 
 
@@ -68,14 +70,17 @@ class PluploadHandler {
 
 		$conf = self::$conf = array_merge(array(
 			'file_data_name' => 'file',
-			'target_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
+			'tmp_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
+			'target_dir' => false,
 			'cleanup' => true,
 			'max_file_age' => 5 * 3600,
 			'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
 			'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
 			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : uniqid('file_'),
 			'allow_extensions' => false,
-			'delay' => 0
+			'delay' => 0,
+			'cb_sanitize_file_name' => array(__CLASS__, 'sanitize_file_name'),
+			'cb_check_file' => false,
 		), $conf);
 
 		self::$_error = null; // start fresh
@@ -91,7 +96,9 @@ class PluploadHandler {
 				usleep($conf['delay']);
 			}
 
-			$file_name = self::sanitize_file_name($conf['file_name']);
+			if (is_callable($conf['cb_sanitize_file_name'])) {
+				$file_name = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
+			}
 
 			// Check if file type is allowed
 			if ($conf['allow_extensions']) {
@@ -122,6 +129,11 @@ class PluploadHandler {
 			// Upload complete write a temp file to the final destination
 			if (!$conf['chunks'] || $conf['chunk'] == $conf['chunks'] - 1) {
 				rename($tmp_path, $file_path);
+
+				if (is_callable($conf['cb_check_file']) && !call_user_func($conf['cb_check_file'], $file_path)) {
+					@unlink($file_path);
+					throw new Exception('', PLUPLOAD_SECURITY_ERR);
+				}
 			}
 		} catch (Exception $ex) {
 			self::$_error = $ex->getCode();
