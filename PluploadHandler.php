@@ -217,6 +217,9 @@ class PluploadHandler {
 				fwrite($out, $buff);
 			}
 			@fclose($in);
+
+			// chunk is not required anymore
+			@unlink($chunk_path);
 		}
 		@fclose($out);
 
