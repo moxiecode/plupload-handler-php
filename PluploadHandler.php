@@ -106,7 +106,7 @@ class PluploadHandler {
 					$conf['allow_extensions'] = preg_split('{\s*,\s*}', $conf['allow_extensions']);
 				}
 
-				if (!in_array(pathinfo($file_name, PATHINFO_EXTENSION), $conf['allow_extensions'])) {
+				if (!in_array(strtolower(pathinfo($file_name, PATHINFO_EXTENSION)), $conf['allow_extensions'])) {
 					throw new Exception('', PLUPLOAD_TYPE_ERR);
 				}
 			}
