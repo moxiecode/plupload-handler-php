@@ -14,6 +14,8 @@ class PluploadHandler {
 
 	public static $conf;
 
+	public static $result;
+
 	private static $_error = null;
 
 	private static $_errors = array(
@@ -83,6 +85,14 @@ class PluploadHandler {
 			'cb_check_file' => false,
 		), $conf);
 
+		self::$result = array(
+			'file_name' => '',
+			'file_path' => '',
+			'tmp_path' => '',
+			'chunk_dir' => '',
+			'complete' => 0,
+		);
+		
 		self::$_error = null; // start fresh
 
 		try {
@@ -97,7 +107,7 @@ class PluploadHandler {
 			}
 
 			if (is_callable($conf['cb_sanitize_file_name'])) {
-				$file_name = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
+				$file_name = self::$result['file_name'] = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
 			}
 
 			// Check if file type is allowed
@@ -111,16 +121,17 @@ class PluploadHandler {
 				}
 			}
 
-			$file_path = rtrim($conf['target_dir'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file_name;
-			$tmp_path = $file_path . ".part";
+			$file_path = self::$result['file_path'] = rtrim($conf['target_dir'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file_name;
+			$tmp_path = self::$result['tmp_path'] = $file_path . ".part";
 
 			// Write file or chunk to appropriate temp location
 			if ($conf['chunks']) {				
-				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . $conf['chunk']);
+				$chunk_dir = self::$result['chunk_dir'] = $file_path . ".dir.part";
+				self::write_file_to($chunk_dir . DIRECTORY_SEPARATOR . $conf['chunk']);
 
 				// Check if all chunks already uploaded
 				if ($conf['chunk'] == $conf['chunks'] - 1) { 
-					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
+					self::write_chunks_to_file($chunk_dir, $tmp_path);
 				}
 			} else {
 				self::write_file_to($tmp_path);
@@ -134,6 +145,8 @@ class PluploadHandler {
 					@unlink($file_path);
 					throw new Exception('', PLUPLOAD_SECURITY_ERR);
 				}
+				
+				self::$result['complete'] = true;
 			}
 		} catch (Exception $ex) {
 			self::$_error = $ex->getCode();
@@ -219,12 +232,12 @@ class PluploadHandler {
 			@fclose($in);
 
 			// chunk is not required anymore
-			@unlink($chunk_path);
+			if (self::$conf['cleanup']) @unlink($chunk_path);
 		}
 		@fclose($out);
 
 		// Cleanup
-		self::rrmdir($chunk_dir);
+		if (self::$conf['cleanup']) self::rrmdir($chunk_dir);
 	}
 
 
@@ -263,7 +276,7 @@ class PluploadHandler {
 	}
 
 
-	private static function cleanup() 
+	public static function cleanup() 
 	{
 		// Remove old temp files	
 		if (file_exists(self::$conf['target_dir'])) {
@@ -322,4 +335,3 @@ class PluploadHandler {
 		rmdir($dir);
 	}
 }
-
