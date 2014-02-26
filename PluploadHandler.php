@@ -232,12 +232,12 @@ class PluploadHandler {
 			@fclose($in);
 
 			// chunk is not required anymore
-			if (self::$conf['cleanup']) @unlink($chunk_path);
+			@unlink($chunk_path);
 		}
 		@fclose($out);
 
 		// Cleanup
-		if (self::$conf['cleanup']) self::rrmdir($chunk_dir);
+		self::rrmdir($chunk_dir);
 	}
 
 
@@ -276,7 +276,7 @@ class PluploadHandler {
 	}
 
 
-	public static function cleanup() 
+	private static function cleanup() 
 	{
 		// Remove old temp files	
 		if (file_exists(self::$conf['target_dir'])) {
