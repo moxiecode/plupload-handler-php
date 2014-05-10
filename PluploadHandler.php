@@ -128,14 +128,13 @@ class PluploadHandler {
 
 			// Upload complete write a temp file to the final destination
 			if (!$conf['chunks'] || $conf['chunk'] == $conf['chunks'] - 1) {
-				rename($tmp_path, $file_path);
-
-				if (is_callable($conf['cb_check_file']) && !call_user_func($conf['cb_check_file'], $file_path)) {
-					@unlink($file_path);
+				if (is_callable($conf['cb_check_file']) && !call_user_func($conf['cb_check_file'], $tmp_path)) {
+					@unlink($tmp_path);
 					throw new Exception('', PLUPLOAD_SECURITY_ERR);
 				}
 
-				// Return full file related information for completed files
+				rename($tmp_path, $file_path);
+
 				return array(
 					'name' => $file_name,
 					'path' => $file_path,
