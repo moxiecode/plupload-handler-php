@@ -68,6 +68,8 @@ class PluploadHandler {
 		// 5 minutes execution time
 		@set_time_limit(5 * 60);
 
+		self::$_error = null; // start fresh
+
 		$conf = self::$conf = array_merge(array(
 			'file_data_name' => 'file',
 			'tmp_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
@@ -76,16 +78,23 @@ class PluploadHandler {
 			'max_file_age' => 5 * 3600,
 			'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
 			'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
-			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : uniqid('file_'),
+			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
 			'allow_extensions' => false,
 			'delay' => 0,
 			'cb_sanitize_file_name' => array(__CLASS__, 'sanitize_file_name'),
 			'cb_check_file' => false,
 		), $conf);
 
-		self::$_error = null; // start fresh
 
 		try {
+			if (!$conf['file_name']) {
+			 	if (!empty($_FILES)) {
+					$conf['file_name'] = $_FILES[$conf['file_data_name']]['name'];
+				} else {
+					throw new Exception('', PLUPLOAD_INPUT_ERR);
+				}
+			}
+		
 			// Cleanup outdated temp files and folders
 			if ($conf['cleanup']) {
 				self::cleanup();
@@ -98,6 +107,8 @@ class PluploadHandler {
 
 			if (is_callable($conf['cb_sanitize_file_name'])) {
 				$file_name = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
+			} else {
+				$file_name = $conf['file_name'];
 			}
 
 			// Check if file type is allowed
