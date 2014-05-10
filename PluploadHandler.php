@@ -134,13 +134,22 @@ class PluploadHandler {
 					@unlink($file_path);
 					throw new Exception('', PLUPLOAD_SECURITY_ERR);
 				}
-			}
+
+				// Return full file related information for completed files
+				return array(
+					'name' => $file_name,
+					'path' => $file_path,
+					'size' => filesize($file_path)
+				);
+			} 
+
+			// ok so far
+			return true;
+
 		} catch (Exception $ex) {
 			self::$_error = $ex->getCode();
 			return false;
 		}
-
-		return true;
 	}
 
 
