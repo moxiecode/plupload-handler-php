@@ -36,7 +36,7 @@ class PluploadHandler {
 	{
 		if (!self::$_error) {
 			return null;
-		} 
+		}
 
 		if (!isset(self::$_errors[self::$_error])) {
 			return PLUPLOAD_UNKNOWN_ERR;
@@ -61,39 +61,43 @@ class PluploadHandler {
 
 
 	/**
-	 * 
+	 *
 	 */
 	static function handle($conf = array())
 	{
 		self::$_error = null; // start fresh
 
-		$conf = self::$conf = array_merge(array(
-			'file_data_name' => 'file',
-			'tmp_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
-			'target_dir' => false,
-			'cleanup' => true,
-			'max_file_age' => 5 * 3600,
-			'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
-			'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
-			'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
-			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
-			'allow_extensions' => false,
-			'delay' => 0,
-			'cb_sanitize_file_name' => array(__CLASS__, 'sanitize_file_name'),
-			'cb_check_file' => false,
-		), $conf);
+		$conf = self::$conf = array_merge(
+			array(
+				'file_data_name' => 'file',
+				'tmp_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
+				'target_dir' => false,
+				'cleanup' => true,
+				'max_file_age' => 5 * 3600,
+				'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
+				'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
+				'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
+				'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
+				'allow_extensions' => false,
+				'delay' => 0,
+				'cb_sanitize_file_name' => array(__CLASS__, 'sanitize_file_name'),
+				'cb_check_file' => false,
+				'cb_filesize' => array(__CLASS__, 'filesize')
+			),
+			$conf
+		);
 
 		@set_time_limit($conf['max_execution_time']);
 
 		try {
 			if (!$conf['file_name']) {
-			 	if (!empty($_FILES)) {
+				if (!empty($_FILES)) {
 					$conf['file_name'] = $_FILES[$conf['file_data_name']]['name'];
 				} else {
 					throw new Exception('', PLUPLOAD_INPUT_ERR);
 				}
 			}
-		
+
 			// Cleanup outdated temp files and folders
 			if ($conf['cleanup']) {
 				self::cleanup();
@@ -125,11 +129,11 @@ class PluploadHandler {
 			$tmp_path = $file_path . ".part";
 
 			// Write file or chunk to appropriate temp location
-			if ($conf['chunks']) {				
+			if ($conf['chunks']) {
 				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . $conf['chunk']);
 
 				// Check if all chunks already uploaded
-				if ($conf['chunk'] == $conf['chunks'] - 1) { 
+				if ($conf['chunk'] == $conf['chunks'] - 1) {
 					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
 				}
 			} else {
@@ -148,9 +152,9 @@ class PluploadHandler {
 				return array(
 					'name' => $file_name,
 					'path' => $file_path,
-					'size' => filesize($file_path)
+					'size' => call_user_func($conf['cb_filesize'], $file_path)
 				);
-			} 
+			}
 
 			// ok so far
 			return true;
@@ -163,7 +167,7 @@ class PluploadHandler {
 
 
 	/**
-	 * Writes either a multipart/form-data message or a binary stream 
+	 * Writes either a multipart/form-data message or a binary stream
 	 * to the specified file.
 	 *
 	 * @throws Exception In case of error generates exception with the corresponding code
@@ -190,7 +194,7 @@ class PluploadHandler {
 			if (!move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path)) {
 				throw new Exception('', PLUPLOAD_MOVE_ERR);
 			}
-		} else {	
+		} else {
 			// Handle binary streams
 			if (!$in = @fopen("php://input", "rb")) {
 				throw new Exception('', PLUPLOAD_INPUT_ERR);
@@ -249,7 +253,7 @@ class PluploadHandler {
 	}
 
 
-	static function no_cache_headers() 
+	static function no_cache_headers()
 	{
 		// Make sure this file is not cached (as it might happen on iOS devices, for example)
 		header("Expires: Mon, 26 Jul 1997 05:00:00 GMT");
@@ -284,9 +288,9 @@ class PluploadHandler {
 	}
 
 
-	private static function cleanup() 
+	private static function cleanup()
 	{
-		// Remove old temp files	
+		// Remove old temp files
 		if (file_exists(self::$conf['target_dir'])) {
 			foreach(glob(self::$conf['target_dir'] . '/*.part') as $tmpFile) {
 				if (time() - filemtime($tmpFile) < self::$conf['max_file_age']) {
@@ -316,23 +320,23 @@ class PluploadHandler {
 	 * @param string $filename The filename to be sanitized
 	 * @return string The sanitized filename
 	 */
-	private static function sanitize_file_name($filename) 
+	private static function sanitize_file_name($filename)
 	{
-	    $special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
-	    $filename = str_replace($special_chars, '', $filename);
-	    $filename = preg_replace('/[\s-]+/', '-', $filename);
-	    $filename = trim($filename, '.-_');
-	    return $filename;
+		$special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
+		$filename = str_replace($special_chars, '', $filename);
+		$filename = preg_replace('/[\s-]+/', '-', $filename);
+		$filename = trim($filename, '.-_');
+		return $filename;
 	}
 
 
-	/** 
-	 * Concise way to recursively remove a directory 
+	/**
+	 * Concise way to recursively remove a directory
 	 * http://www.php.net/manual/en/function.rmdir.php#108113
 	 *
 	 * @param string $dir Directory to remove
 	 */
-	private static function rrmdir($dir) 
+	private static function rrmdir($dir)
 	{
 		foreach(glob($dir . '/*') as $file) {
 			if(is_dir($file))
@@ -341,6 +345,52 @@ class PluploadHandler {
 				unlink($file);
 		}
 		rmdir($dir);
+	}
+
+	/**
+	 * PHPs filesize() fails to measure files larger than 2gb
+	 * http://stackoverflow.com/a/5502328/189673
+	 *
+	 * @param string $file Path to the file to measure
+	 * @return int
+	 */
+	private static function filesize($file)
+	{
+		static $iswin;
+		if (!isset($iswin)) {
+			$iswin = (strtoupper(substr(PHP_OS, 0, 3)) == 'WIN');
+		}
+
+		static $exec_works;
+		if (!isset($exec_works)) {
+			$exec_works = (function_exists('exec') && !ini_get('safe_mode') && @exec('echo EXEC') == 'EXEC');
+		}
+
+		// try a shell command
+		if ($exec_works) {
+			$cmd = ($iswin) ? "for %F in (\"$file\") do @echo %~zF" : "stat -c%s \"$file\"";
+			@exec($cmd, $output);
+			if (is_array($output) && ctype_digit($size = trim(implode("\n", $output)))) {
+				return $size;
+			}
+		}
+
+		// try the Windows COM interface
+		if ($iswin && class_exists("COM")) {
+			try {
+				$fsobj = new COM('Scripting.FileSystemObject');
+				$f = $fsobj->GetFile( realpath($file) );
+				$size = $f->Size;
+			} catch (Exception $e) {
+				$size = null;
+			}
+			if (ctype_digit($size)) {
+				return $size;
+			}
+		}
+
+		// if all else fails
+		return filesize($file);
 	}
 }
 
