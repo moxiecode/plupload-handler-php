@@ -14,9 +14,9 @@ class PluploadHandler {
 
 	public static $conf;
 
-	private static $_error = null;
+	protected static $_error = null;
 
-	private static $_errors = array(
+	protected static $_errors = array(
 		PLUPLOAD_MOVE_ERR => "Failed to move uploaded file.",
 		PLUPLOAD_INPUT_ERR => "Failed to open input stream.",
 		PLUPLOAD_OUTPUT_ERR => "Failed to open output stream.",
@@ -288,7 +288,7 @@ class PluploadHandler {
 	}
 
 
-	private static function cleanup()
+	protected static function cleanup()
 	{
 		// Remove old temp files
 		if (file_exists(self::$conf['target_dir'])) {
@@ -320,7 +320,7 @@ class PluploadHandler {
 	 * @param string $filename The filename to be sanitized
 	 * @return string The sanitized filename
 	 */
-	private static function sanitize_file_name($filename)
+	protected static function sanitize_file_name($filename)
 	{
 		$special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
 		$filename = str_replace($special_chars, '', $filename);
@@ -336,7 +336,7 @@ class PluploadHandler {
 	 *
 	 * @param string $dir Directory to remove
 	 */
-	private static function rrmdir($dir)
+	protected static function rrmdir($dir)
 	{
 		foreach(glob($dir . '/*') as $file) {
 			if(is_dir($file))
@@ -354,7 +354,7 @@ class PluploadHandler {
 	 * @param string $file Path to the file to measure
 	 * @return int
 	 */
-	private static function filesize($file)
+	protected static function filesize($file)
 	{
 		static $iswin;
 		if (!isset($iswin)) {
