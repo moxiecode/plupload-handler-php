@@ -65,9 +65,6 @@ class PluploadHandler {
 	 */
 	static function handle($conf = array())
 	{
-		// 5 minutes execution time
-		@set_time_limit(5 * 60);
-
 		self::$_error = null; // start fresh
 
 		$conf = self::$conf = array_merge(array(
@@ -76,6 +73,7 @@ class PluploadHandler {
 			'target_dir' => false,
 			'cleanup' => true,
 			'max_file_age' => 5 * 3600,
+			'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
 			'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
 			'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
 			'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
@@ -85,6 +83,7 @@ class PluploadHandler {
 			'cb_check_file' => false,
 		), $conf);
 
+		@set_time_limit($conf['max_execution_time']);
 
 		try {
 			if (!$conf['file_name']) {
