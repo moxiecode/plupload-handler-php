@@ -186,7 +186,10 @@ class PluploadHandler {
 			if ($_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
 				throw new Exception('', PLUPLOAD_MOVE_ERR);
 			}
-			move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path);
+
+			if (!move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path)) {
+				throw new Exception('', PLUPLOAD_MOVE_ERR);
+			}
 		} else {	
 			// Handle binary streams
 			if (!$in = @fopen("php://input", "rb")) {
