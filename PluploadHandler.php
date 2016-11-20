@@ -29,7 +29,8 @@ class PluploadHandler
                 'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
                 'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
                 'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
-                'combine_chunks' => true,
+                'append_chunks_to_target' => true,
+                'combine_chunks_on_complete' => true,
                 'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
                 'allow_extensions' => false,
                 'delay' => 0,
@@ -140,14 +141,39 @@ class PluploadHandler
     }
 
 
+    /**
+     * Combine chunks for specified file name.
+     *
+     * @throws Exception In case of error generates exception with the corresponding code
+     *
+     * @param string $file_name
+     * @return string Path to the target file
+     */
+    function combine_chunks_for($file_name)
+    {
+        $file_path = $this->get_target_path_for($file_name);
+        $tmp_path = $this->write_chunks_to_file("$file_path.dir.part", "$file_path.part");
+        return $this->rename($tmp_path, $file_path);
+    }
+
+
     protected function handle_chunk($chunk, $file_name)
     {
         $file_path = $this->get_target_path_for($file_name);
-        $chunk_path = $this->write_upload_to("$file_path.dir.part" . DS . "$chunk.part");
 
-        // Check if all chunks already uploaded
-        if ($this->is_last_chunk($file_name) && $this->conf['combine_chunks']) {
-            return $this->combine_chunks_for($file_name);
+        if ($this->conf['append_chunks_to_target']) {
+            $chunk_path = $this->write_upload_to("$file_path.part", false, 'ab');
+
+            if ($this->is_last_chunk($file_name)) {
+                return $this->rename($chunk_path, $file_path);
+            }
+        } else {
+            $chunk_path = $this->write_upload_to("$file_path.dir.part" . DS . "$chunk.part");
+
+            // Check if all chunks already uploaded
+            if ($this->is_last_chunk($file_name) && $this->conf['combine_chunks_on_complete']) {
+                return $this->combine_chunks_for($file_name);
+            }
         }
 
         return array(
@@ -163,7 +189,12 @@ class PluploadHandler
     {
         $file_path = $this->get_target_path_for($file_name);
         $tmp_path = $this->write_upload_to($file_path . ".part");
+        return $this->rename($tmp_path, $file_path);
+    }
 
+
+    protected function rename($tmp_path, $file_path)
+    {
         // Upload complete write a temp file to the final destination
         if (!$this->file_is_ok($tmp_path)) {
             if ($this->conf['cleanup']) {
@@ -172,43 +203,15 @@ class PluploadHandler
             throw new Exception('', PLUPLOAD_SECURITY_ERR);
         }
 
-        rename($tmp_path, $file_path);
-
-        return array(
-            'name' => $file_name,
-            'path' => $file_path,
-            'size' => call_user_func($this->conf['cb_filesize'], $file_path)
-        );
-    }
-
-
-    /**
-     * Combine chunks for specified file name.
-     *
-     * @throws Exception In case of error generates exception with the corresponding code
-     *
-     * @param string $file_name
-     * @return string Path to the target file
-     */
-    function combine_chunks_for($file_name)
-    {
-        $file_path = $this->get_target_path_for($file_name);
-        $tmp_path = $this->write_chunks_to_file("$file_path.dir.part", "$file_path.part");
-
-        if (!$this->file_is_ok($tmp_path)) {
-            if ($this->conf['cleanup']) {
-                @unlink($tmp_path);
-            }
-            throw new Exception('', PLUPLOAD_SECURITY_ERR);
+        if (rename($tmp_path, $file_path)) {
+            return array(
+                'name' => basename($file_path),
+                'path' => $file_path,
+                'size' => call_user_func($this->conf['cb_filesize'], $file_path)
+            );
+        } else {
+            return false;
         }
-
-        rename($tmp_path, $file_path);
-
-        return array(
-            'name' => $file_name,
-            'path' => $file_path,
-            'size' => call_user_func($this->conf['cb_filesize'], $file_path)
-        );
     }
 
 
@@ -222,7 +225,7 @@ class PluploadHandler
      * @param string [$file_data_name='file'] The name of the multipart field
      * @return string Path to the target file
      */
-    protected function write_upload_to($file_path, $file_data_name = false)
+    protected function write_upload_to($file_path, $file_data_name = false, $mode = 'wb')
     {
         if (!$file_data_name) {
             $file_data_name = $this->conf['file_data_name'];
@@ -233,32 +236,36 @@ class PluploadHandler
             throw new Exception('', PLUPLOAD_TMPDIR_ERR);
         }
 
-        if (!empty($_FILES) && isset($_FILES[$file_data_name])) {
-            if ($_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
-                throw new Exception('', PLUPLOAD_MOVE_ERR);
-            }
-
-            if (!rename($_FILES[$file_data_name]["tmp_name"], $file_path)) {
-                throw new Exception('', PLUPLOAD_MOVE_ERR);
-            }
-        } else {
-            // Handle binary streams
-            if (!$in = @fopen("php://input", "rb")) {
+        if (!empty($_FILES)) {
+            if (!isset($_FILES[$file_data_name]) || $_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
                 throw new Exception('', PLUPLOAD_INPUT_ERR);
             }
-
-            if (!$out = @fopen($file_path, "wb")) {
-                throw new Exception('', PLUPLOAD_OUTPUT_ERR);
-            }
-
-            while ($buff = fread($in, 4096)) {
-                fwrite($out, $buff);
-            }
-
-            @fclose($out);
-            @fclose($in);
+            return $this->write_to_file($_FILES[$file_data_name]["tmp_name"], $file_path, $mode);
+        } else {
+            return $this->write_to_file("php://input", $file_path, $mode);
         }
-        return $file_path;
+    }
+
+
+    protected function write_to_file($source_path, $target_path, $mode = 'wb')
+    {
+        if (!$out = @fopen($target_path, $mode)) {
+            throw new Exception('', PLUPLOAD_OUTPUT_ERR);
+        }
+
+        if (!$in = @fopen($source_path, "rb")) {
+            die('hey');
+            throw new Exception('', PLUPLOAD_INPUT_ERR);
+        }
+
+        while ($buff = fread($in, 4096)) {
+            fwrite($out, $buff);
+        }
+
+        @fclose($out);
+        @fclose($in);
+
+        return $target_path;
     }
 
 
@@ -278,7 +285,7 @@ class PluploadHandler
         }
 
         for ($i = 0; $i < $this->conf['chunks']; $i++) {
-            $chunk_path = $chunk_dir . DIRECTORY_SEPARATOR . "$i.part";
+            $chunk_path = $chunk_dir . DS . "$i.part";
             if (!file_exists($chunk_path)) {
                 throw new Exception('', PLUPLOAD_MOVE_ERR);
             }
@@ -291,26 +298,39 @@ class PluploadHandler
                 fwrite($out, $buff);
             }
             @fclose($in);
-
-            // chunk is not required anymore
-			if ($this->conf['cleanup']) {
-            	@unlink($chunk_path);
-			}
         }
         @fclose($out);
 
         // Cleanup
-		if ($this->conf['cleanup']) {
-        	$this->rrmdir($chunk_dir);
-		}
-		return $file_path;
+        if ($this->conf['cleanup']) {
+            $this->rrmdir($chunk_dir);
+        }
+        return $file_path;
     }
 
 
-	function get_filesize_for($file_name)
-	{
-		return $this->filesize(get_target_path_for($file_name));
-	}
+    protected function is_last_chunk($file_name)
+    {
+        if ($this->conf['append_chunks_to_target']) {
+            return $this->conf['chunks'] && $this->conf['chunks'] == $this->conf['chunk'] + 1;
+        } else {
+            $file_path = $this->get_target_path_for($file_name);
+            $chunks = glob("$file_path.dir.part/*.part");
+            return sizeof($chunks) == $this->conf['chunks'];
+        }
+    }
+
+
+    protected function file_is_ok($path)
+    {
+        return !is_callable($this->conf['cb_check_file']) || call_user_func($this->conf['cb_check_file'], $path);
+    }
+
+
+    function get_filesize_for($file_name)
+    {
+        return call_user_func($this->conf['cb_filesize'], get_target_path_for($file_name));
+    }
 
 
     function get_target_path_for($file_name)
@@ -354,35 +374,21 @@ class PluploadHandler
     }
 
 
-	protected function cleanup()
-	{
-		// Remove old temp files
-		if (file_exists($this->conf['target_dir'])) {
-			foreach(glob($this->conf['target_dir'] . '/*.part') as $tmpFile) {
-				if (time() - filemtime($tmpFile) < $this->conf['max_file_age']) {
-					continue;
-				}
-				if (is_dir($tmpFile)) {
-					self::rrmdir($tmpFile);
-				} else {
-					@unlink($tmpFile);
-				}
-			}
-		}
-	}
-
-
-    protected function is_last_chunk($file_name)
+    protected function cleanup()
     {
-        $file_path = $this->get_target_path_for($file_name);
-		$chunks = glob("$file_path.dir.part/*.part");
-		return sizeof($chunks) == $this->conf['chunks'];
-	}
-
-
-    protected function file_is_ok($path)
-    {
-        return !is_callable($this->conf['cb_check_file']) || call_user_func($this->conf['cb_check_file'], $path);
+        // Remove old temp files
+        if (file_exists($this->conf['target_dir'])) {
+            foreach (glob($this->conf['target_dir'] . '/*.part') as $tmpFile) {
+                if (time() - filemtime($tmpFile) < $this->conf['max_file_age']) {
+                    continue;
+                }
+                if (is_dir($tmpFile)) {
+                    self::rrmdir($tmpFile);
+                } else {
+                    @unlink($tmpFile);
+                }
+            }
+        }
     }
 
 
@@ -426,6 +432,7 @@ class PluploadHandler
         }
         rmdir($dir);
     }
+
 
     /**
      * PHPs filesize() fails to measure files larger than 2gb
