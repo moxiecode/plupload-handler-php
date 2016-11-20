@@ -4,7 +4,7 @@ require_once("PluploadHandler.php");
 
 $ph = new PluploadHandler(array(
 	'cleanup' => false,
-	'target_dir' => 'uploads/',
+	'target_dir' => '../uploads/',
 	'allow_extensions' => 'jpg,jpeg,png'
 ));
 
