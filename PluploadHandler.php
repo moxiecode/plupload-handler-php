@@ -238,7 +238,7 @@ class PluploadHandler
                 throw new Exception('', PLUPLOAD_MOVE_ERR);
             }
 
-            if (!move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path)) {
+            if (!rename($_FILES[$file_data_name]["tmp_name"], $file_path)) {
                 throw new Exception('', PLUPLOAD_MOVE_ERR);
             }
         } else {
