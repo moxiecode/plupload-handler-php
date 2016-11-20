@@ -9,291 +9,357 @@ define('PLUPLOAD_TYPE_ERR', 104);
 define('PLUPLOAD_UNKNOWN_ERR', 111);
 define('PLUPLOAD_SECURITY_ERR', 105);
 
-
-class PluploadHandler {
-
-	public static $conf;
-
-	protected static $_error = null;
-
-	protected static $_errors = array(
-		PLUPLOAD_MOVE_ERR => "Failed to move uploaded file.",
-		PLUPLOAD_INPUT_ERR => "Failed to open input stream.",
-		PLUPLOAD_OUTPUT_ERR => "Failed to open output stream.",
-		PLUPLOAD_TMPDIR_ERR => "Failed to open temp directory.",
-		PLUPLOAD_TYPE_ERR => "File type not allowed.",
-		PLUPLOAD_UNKNOWN_ERR => "Failed due to unknown error.",
-		PLUPLOAD_SECURITY_ERR => "File didn't pass security check."
-	);
+define('DS', DIRECTORY_SEPARATOR);
 
 
-	/**
-	 * Retrieve the error code
-	 *
-	 * @return int Error code
-	 */
-	static function get_error_code()
+class PluploadHandler
+{
+    private $conf;
+    protected $error = null;
+
+    function __construct($conf = array())
+    {
+        $this->conf = array_merge(
+            array(
+                'file_data_name' => 'file',
+                'tmp_dir' => ini_get("upload_tmp_dir") . DS . "plupload",
+                'target_dir' => false,
+                'cleanup' => true,
+                'max_file_age' => 5 * 3600,
+                'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
+                'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
+                'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
+                'combine_chunks' => true,
+                'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
+                'allow_extensions' => false,
+                'delay' => 0,
+                'cb_sanitize_file_name' => array($this, 'sanitize_file_name'),
+                'cb_check_file' => false,
+                'cb_filesize' => array($this, 'filesize'),
+                'error_strings' => array(
+                    PLUPLOAD_MOVE_ERR => "Failed to move uploaded file.",
+                    PLUPLOAD_INPUT_ERR => "Failed to open input stream.",
+                    PLUPLOAD_OUTPUT_ERR => "Failed to open output stream.",
+                    PLUPLOAD_TMPDIR_ERR => "Failed to open temp directory.",
+                    PLUPLOAD_TYPE_ERR => "File type not allowed.",
+                    PLUPLOAD_UNKNOWN_ERR => "Failed due to unknown error.",
+                    PLUPLOAD_SECURITY_ERR => "File didn't pass security check."
+                )
+            ),
+            $conf
+        );
+    }
+
+
+    function handle_upload()
+    {
+        $conf = $this->conf;
+        $this->error = null; // start fresh
+
+        @set_time_limit($conf['max_execution_time']);
+
+        try {
+            if (!$conf['file_name']) {
+                if (!empty($_FILES)) {
+                    $conf['file_name'] = $_FILES[$conf['file_data_name']]['name'];
+                } else {
+                    throw new Exception('', PLUPLOAD_INPUT_ERR);
+                }
+            }
+
+            // Cleanup outdated temp files and folders
+            if ($conf['cleanup']) {
+                $this->cleanup();
+            }
+
+            // Fake network congestion
+            if ($conf['delay']) {
+                usleep($conf['delay']);
+            }
+
+            if (is_callable($conf['cb_sanitize_file_name'])) {
+                $file_name = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
+            } else {
+                $file_name = $conf['file_name'];
+            }
+
+            // Check if file type is allowed
+            if ($conf['allow_extensions']) {
+                if (is_string($conf['allow_extensions'])) {
+                    $conf['allow_extensions'] = preg_split('{\s*,\s*}', $conf['allow_extensions']);
+                }
+
+                if (!in_array(strtolower(pathinfo($file_name, PATHINFO_EXTENSION)), $conf['allow_extensions'])) {
+                    throw new Exception('', PLUPLOAD_TYPE_ERR);
+                }
+            }
+
+            // Write file or chunk to appropriate temp location
+            if ($conf['chunks']) {
+                return $this->handle_chunk($conf['chunk'], $file_name);
+            } else {
+                return $this->handle_file($file_name);
+            }
+        } catch (Exception $ex) {
+            $this->error = $ex->getCode();
+            return false;
+        }
+    }
+
+
+    /**
+     * Retrieve the error code
+     *
+     * @return int Error code
+     */
+    function get_error_code()
+    {
+        if (!$this->error) {
+            return null;
+        }
+
+        if (!isset($this->conf['error_strings'][$this->error])) {
+            return PLUPLOAD_UNKNOWN_ERR;
+        }
+
+        return $this->error;
+    }
+
+
+    /**
+     * Retrieve the error message
+     *
+     * @return string Error message
+     */
+    function get_error_message()
+    {
+        if ($code = $this->get_error_code()) {
+            return $this->conf['error_strings'][$code];
+        }
+        return '';
+    }
+
+
+    protected function handle_chunk($chunk, $file_name)
+    {
+        $file_path = $this->get_target_path_for($file_name);
+        $chunk_path = $this->write_upload_to("$file_path.dir.part" . DS . "$chunk.part");
+
+        // Check if all chunks already uploaded
+        if ($this->is_last_chunk($file_name) && $this->conf['combine_chunks']) {
+            return $this->combine_chunks_for($file_name);
+        }
+
+        return array(
+            'name' => $file_name,
+            'path' => $chunk_path,
+            'chunk' => $chunk,
+            'size' => call_user_func($this->conf['cb_filesize'], $chunk_path)
+        );
+    }
+
+
+    protected function handle_file($file_name)
+    {
+        $file_path = $this->get_target_path_for($file_name);
+        $tmp_path = $this->write_upload_to($file_path . ".part");
+
+        // Upload complete write a temp file to the final destination
+        if (!$this->file_is_ok($tmp_path)) {
+            if ($this->conf['cleanup']) {
+                @unlink($tmp_path);
+            }
+            throw new Exception('', PLUPLOAD_SECURITY_ERR);
+        }
+
+        rename($tmp_path, $file_path);
+
+        return array(
+            'name' => $file_name,
+            'path' => $file_path,
+            'size' => call_user_func($this->conf['cb_filesize'], $file_path)
+        );
+    }
+
+
+    /**
+     * Combine chunks for specified file name.
+     *
+     * @throws Exception In case of error generates exception with the corresponding code
+     *
+     * @param string $file_name
+     * @return string Path to the target file
+     */
+    function combine_chunks_for($file_name)
+    {
+        $file_path = $this->get_target_path_for($file_name);
+        $tmp_path = $this->write_chunks_to_file("$file_path.dir.part", "$file_path.part");
+
+        if (!$this->file_is_ok($tmp_path)) {
+            if ($this->conf['cleanup']) {
+                @unlink($tmp_path);
+            }
+            throw new Exception('', PLUPLOAD_SECURITY_ERR);
+        }
+
+        rename($tmp_path, $file_path);
+
+        return array(
+            'name' => $file_name,
+            'path' => $file_path,
+            'size' => call_user_func($this->conf['cb_filesize'], $file_path)
+        );
+    }
+
+
+    /**
+     * Writes either a multipart/form-data message or a binary stream
+     * to the specified file.
+     *
+     * @throws Exception In case of error generates exception with the corresponding code
+     *
+     * @param string $file_path The path to write the file to
+     * @param string [$file_data_name='file'] The name of the multipart field
+     * @return string Path to the target file
+     */
+    protected function write_upload_to($file_path, $file_data_name = false)
+    {
+        if (!$file_data_name) {
+            $file_data_name = $this->conf['file_data_name'];
+        }
+
+        $base_dir = dirname($file_path);
+        if (!file_exists($base_dir) && !@mkdir($base_dir, 0777, true)) {
+            throw new Exception('', PLUPLOAD_TMPDIR_ERR);
+        }
+
+        if (!empty($_FILES) && isset($_FILES[$file_data_name])) {
+            if ($_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
+                throw new Exception('', PLUPLOAD_MOVE_ERR);
+            }
+
+            if (!move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path)) {
+                throw new Exception('', PLUPLOAD_MOVE_ERR);
+            }
+        } else {
+            // Handle binary streams
+            if (!$in = @fopen("php://input", "rb")) {
+                throw new Exception('', PLUPLOAD_INPUT_ERR);
+            }
+
+            if (!$out = @fopen($file_path, "wb")) {
+                throw new Exception('', PLUPLOAD_OUTPUT_ERR);
+            }
+
+            while ($buff = fread($in, 4096)) {
+                fwrite($out, $buff);
+            }
+
+            @fclose($out);
+            @fclose($in);
+        }
+        return $file_path;
+    }
+
+
+    /**
+     * Combine chunks from the specified folder into the single file.
+     *
+     * @throws Exception In case of error generates exception with the corresponding code
+     *
+     * @param string $chunk_dir Temp directory with the chunks
+     * @param string $file_path The file to write the chunks to
+     * @return string File path containing combined chunks
+     */
+    protected function write_chunks_to_file($chunk_dir, $file_path)
+    {
+        if (!$out = @fopen($file_path, "wb")) {
+            throw new Exception('', PLUPLOAD_OUTPUT_ERR);
+        }
+
+        for ($i = 0; $i < $this->conf['chunks']; $i++) {
+            $chunk_path = $chunk_dir . DIRECTORY_SEPARATOR . "$i.part";
+            if (!file_exists($chunk_path)) {
+                throw new Exception('', PLUPLOAD_MOVE_ERR);
+            }
+
+            if (!$in = @fopen($chunk_path, "rb")) {
+                throw new Exception('', PLUPLOAD_INPUT_ERR);
+            }
+
+            while ($buff = fread($in, 4096)) {
+                fwrite($out, $buff);
+            }
+            @fclose($in);
+
+            // chunk is not required anymore
+			if ($this->conf['cleanup']) {
+            	@unlink($chunk_path);
+			}
+        }
+        @fclose($out);
+
+        // Cleanup
+		if ($this->conf['cleanup']) {
+        	$this->rrmdir($chunk_dir);
+		}
+		return $file_path;
+    }
+
+
+	function get_filesize_for($file_name)
 	{
-		if (!self::$_error) {
-			return null;
-		}
-
-		if (!isset(self::$_errors[self::$_error])) {
-			return PLUPLOAD_UNKNOWN_ERR;
-		}
-
-		return self::$_error;
+		return $this->filesize(get_target_path_for($file_name));
 	}
 
 
-	/**
-	 * Retrieve the error message
-	 *
-	 * @return string Error message
-	 */
-	static function get_error_message()
-	{
-		if ($code = self::get_error_code()) {
-			return self::$_errors[$code];
-		}
-		return '';
-	}
+    function get_target_path_for($file_name)
+    {
+        return rtrim($this->conf['target_dir'], DS) . DS . $file_name;
+    }
 
 
-	/**
-	 *
-	 */
-	static function handle($conf = array())
-	{
-		self::$_error = null; // start fresh
-
-		$conf = self::$conf = array_merge(
-			array(
-				'file_data_name' => 'file',
-				'tmp_dir' => ini_get("upload_tmp_dir") . DIRECTORY_SEPARATOR . "plupload",
-				'target_dir' => false,
-				'cleanup' => true,
-				'max_file_age' => 5 * 3600,
-				'max_execution_time' => 5 * 60, // in seconds (5 minutes by default)
-				'chunk' => isset($_REQUEST['chunk']) ? intval($_REQUEST['chunk']) : 0,
-				'chunks' => isset($_REQUEST['chunks']) ? intval($_REQUEST['chunks']) : 0,
-				'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
-				'allow_extensions' => false,
-				'delay' => 0,
-				'cb_sanitize_file_name' => array(__CLASS__, 'sanitize_file_name'),
-				'cb_check_file' => false,
-				'cb_filesize' => array(__CLASS__, 'filesize')
-			),
-			$conf
-		);
-
-		@set_time_limit($conf['max_execution_time']);
-
-		try {
-			if (!$conf['file_name']) {
-				if (!empty($_FILES)) {
-					$conf['file_name'] = $_FILES[$conf['file_data_name']]['name'];
-				} else {
-					throw new Exception('', PLUPLOAD_INPUT_ERR);
-				}
-			}
-
-			// Cleanup outdated temp files and folders
-			if ($conf['cleanup']) {
-				self::cleanup();
-			}
-
-			// Fake network congestion
-			if ($conf['delay']) {
-				usleep($conf['delay']);
-			}
-
-			if (is_callable($conf['cb_sanitize_file_name'])) {
-				$file_name = call_user_func($conf['cb_sanitize_file_name'], $conf['file_name']);
-			} else {
-				$file_name = $conf['file_name'];
-			}
-
-			// Check if file type is allowed
-			if ($conf['allow_extensions']) {
-				if (is_string($conf['allow_extensions'])) {
-					$conf['allow_extensions'] = preg_split('{\s*,\s*}', $conf['allow_extensions']);
-				}
-
-				if (!in_array(strtolower(pathinfo($file_name, PATHINFO_EXTENSION)), $conf['allow_extensions'])) {
-					throw new Exception('', PLUPLOAD_TYPE_ERR);
-				}
-			}
-
-			$file_path = rtrim($conf['target_dir'], DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file_name;
-			$tmp_path = $file_path . ".part";
-
-			// Write file or chunk to appropriate temp location
-			if ($conf['chunks']) {
-				self::write_file_to("$file_path.dir.part" . DIRECTORY_SEPARATOR . $conf['chunk']);
-
-				// Check if all chunks already uploaded
-				if ($conf['chunk'] == $conf['chunks'] - 1) {
-					self::write_chunks_to_file("$file_path.dir.part", $tmp_path);
-				}
-			} else {
-				self::write_file_to($tmp_path);
-			}
-
-			// Upload complete write a temp file to the final destination
-			if (!$conf['chunks'] || $conf['chunk'] == $conf['chunks'] - 1) {
-				if (is_callable($conf['cb_check_file']) && !call_user_func($conf['cb_check_file'], $tmp_path)) {
-					@unlink($tmp_path);
-					throw new Exception('', PLUPLOAD_SECURITY_ERR);
-				}
-
-				rename($tmp_path, $file_path);
-
-				return array(
-					'name' => $file_name,
-					'path' => $file_path,
-					'size' => call_user_func($conf['cb_filesize'], $file_path)
-				);
-			}
-
-			// ok so far
-			return true;
-
-		} catch (Exception $ex) {
-			self::$_error = $ex->getCode();
-			return false;
-		}
-	}
+    function send_nocache_headers()
+    {
+        // Make sure this file is not cached (as it might happen on iOS devices, for example)
+        header("Expires: Mon, 26 Jul 1997 05:00:00 GMT");
+        header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
+        header("Cache-Control: no-store, no-cache, must-revalidate");
+        header("Cache-Control: post-check=0, pre-check=0", false);
+        header("Pragma: no-cache");
+    }
 
 
-	/**
-	 * Writes either a multipart/form-data message or a binary stream
-	 * to the specified file.
-	 *
-	 * @throws Exception In case of error generates exception with the corresponding code
-	 *
-	 * @param string $file_path The path to write the file to
-	 * @param string [$file_data_name='file'] The name of the multipart field
-	 */
-	static function write_file_to($file_path, $file_data_name = false)
-	{
-		if (!$file_data_name) {
-			$file_data_name = self::$conf['file_data_name'];
-		}
+    function send_cors_headers($headers = array(), $origin = '*')
+    {
+        $allow_origin_present = false;
 
-		$base_dir = dirname($file_path);
-		if (!file_exists($base_dir) && !@mkdir($base_dir, 0777, true)) {
-			throw new Exception('', PLUPLOAD_TMPDIR_ERR);
-		}
+        if (!empty($headers)) {
+            foreach ($headers as $header => $value) {
+                if (strtolower($header) == 'access-control-allow-origin') {
+                    $allow_origin_present = true;
+                }
+                header("$header: $value");
+            }
+        }
 
-		if (!empty($_FILES) && isset($_FILES[$file_data_name])) {
-			if ($_FILES[$file_data_name]["error"] || !is_uploaded_file($_FILES[$file_data_name]["tmp_name"])) {
-				throw new Exception('', PLUPLOAD_MOVE_ERR);
-			}
+        if ($origin && !$allow_origin_present) {
+            header("Access-Control-Allow-Origin: $origin");
+        }
 
-			if (!move_uploaded_file($_FILES[$file_data_name]["tmp_name"], $file_path)) {
-				throw new Exception('', PLUPLOAD_MOVE_ERR);
-			}
-		} else {
-			// Handle binary streams
-			if (!$in = @fopen("php://input", "rb")) {
-				throw new Exception('', PLUPLOAD_INPUT_ERR);
-			}
-
-			if (!$out = @fopen($file_path, "wb")) {
-				throw new Exception('', PLUPLOAD_OUTPUT_ERR);
-			}
-
-			while ($buff = fread($in, 4096)) {
-				fwrite($out, $buff);
-			}
-
-			@fclose($out);
-			@fclose($in);
-		}
-	}
+        // other CORS headers if any...
+        if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+            exit; // finish preflight CORS requests here
+        }
+    }
 
 
-	/**
-	 * Combine chunks from the specified folder into the single file.
-	 *
-	 * @throws Exception In case of error generates exception with the corresponding code
-	 *
-	 * @param string $chunk_dir Temp directory with the chunks
-	 * @param string $file_path The file to write the chunks to
-	 */
-	static function write_chunks_to_file($chunk_dir, $file_path)
-	{
-		if (!$out = @fopen($file_path, "wb")) {
-			throw new Exception('', PLUPLOAD_OUTPUT_ERR);
-		}
-
-		for ($i = 0; $i < self::$conf['chunks']; $i++) {
-			$chunk_path = $chunk_dir . DIRECTORY_SEPARATOR . $i;
-			if (!file_exists($chunk_path)) {
-				throw new Exception('', PLUPLOAD_MOVE_ERR);
-			}
-
-			if (!$in = @fopen($chunk_path, "rb")) {
-				throw new Exception('', PLUPLOAD_INPUT_ERR);
-			}
-
-			while ($buff = fread($in, 4096)) {
-				fwrite($out, $buff);
-			}
-			@fclose($in);
-
-			// chunk is not required anymore
-			@unlink($chunk_path);
-		}
-		@fclose($out);
-
-		// Cleanup
-		self::rrmdir($chunk_dir);
-	}
-
-
-	static function no_cache_headers()
-	{
-		// Make sure this file is not cached (as it might happen on iOS devices, for example)
-		header("Expires: Mon, 26 Jul 1997 05:00:00 GMT");
-		header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
-		header("Cache-Control: no-store, no-cache, must-revalidate");
-		header("Cache-Control: post-check=0, pre-check=0", false);
-		header("Pragma: no-cache");
-	}
-
-
-	static function cors_headers($headers = array(), $origin = '*')
-	{
-		$allow_origin_present = false;
-
-		if (!empty($headers)) {
-			foreach ($headers as $header => $value) {
-				if (strtolower($header) == 'access-control-allow-origin') {
-					$allow_origin_present = true;
-				}
-				header("$header: $value");
-			}
-		}
-
-		if ($origin && !$allow_origin_present) {
-			header("Access-Control-Allow-Origin: $origin");
-		}
-
-		// other CORS headers if any...
-		if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-			exit; // finish preflight CORS requests here
-		}
-	}
-
-
-	protected static function cleanup()
+	protected function cleanup()
 	{
 		// Remove old temp files
-		if (file_exists(self::$conf['target_dir'])) {
-			foreach(glob(self::$conf['target_dir'] . '/*.part') as $tmpFile) {
-				if (time() - filemtime($tmpFile) < self::$conf['max_file_age']) {
+		if (file_exists($this->conf['target_dir'])) {
+			foreach(glob($this->conf['target_dir'] . '/*.part') as $tmpFile) {
+				if (time() - filemtime($tmpFile) < $this->conf['max_file_age']) {
 					continue;
 				}
 				if (is_dir($tmpFile)) {
@@ -306,91 +372,105 @@ class PluploadHandler {
 	}
 
 
-	/**
-	 * Sanitizes a filename replacing whitespace with dashes
-	 *
-	 * Removes special characters that are illegal in filenames on certain
-	 * operating systems and special characters requiring special escaping
-	 * to manipulate at the command line. Replaces spaces and consecutive
-	 * dashes with a single dash. Trim period, dash and underscore from beginning
-	 * and end of filename.
-	 *
-	 * @author WordPress
-	 *
-	 * @param string $filename The filename to be sanitized
-	 * @return string The sanitized filename
-	 */
-	protected static function sanitize_file_name($filename)
-	{
-		$special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
-		$filename = str_replace($special_chars, '', $filename);
-		$filename = preg_replace('/[\s-]+/', '-', $filename);
-		$filename = trim($filename, '.-_');
-		return $filename;
+    protected function is_last_chunk($file_name)
+    {
+        $file_path = $this->get_target_path_for($file_name);
+		$chunks = glob("$file_path.dir.part/*.part");
+		return sizeof($chunks) == $this->conf['chunks'];
 	}
 
 
-	/**
-	 * Concise way to recursively remove a directory
-	 * http://www.php.net/manual/en/function.rmdir.php#108113
-	 *
-	 * @param string $dir Directory to remove
-	 */
-	protected static function rrmdir($dir)
-	{
-		foreach(glob($dir . '/*') as $file) {
-			if(is_dir($file))
-				self::rrmdir($file);
-			else
-				unlink($file);
-		}
-		rmdir($dir);
-	}
+    protected function file_is_ok($path)
+    {
+        return !is_callable($this->conf['cb_check_file']) || call_user_func($this->conf['cb_check_file'], $path);
+    }
 
-	/**
-	 * PHPs filesize() fails to measure files larger than 2gb
-	 * http://stackoverflow.com/a/5502328/189673
-	 *
-	 * @param string $file Path to the file to measure
-	 * @return int
-	 */
-	protected static function filesize($file)
-	{
-		static $iswin;
-		if (!isset($iswin)) {
-			$iswin = (strtoupper(substr(PHP_OS, 0, 3)) == 'WIN');
-		}
 
-		static $exec_works;
-		if (!isset($exec_works)) {
-			$exec_works = (function_exists('exec') && !ini_get('safe_mode') && @exec('echo EXEC') == 'EXEC');
-		}
+    /**
+     * Sanitizes a filename replacing whitespace with dashes
+     *
+     * Removes special characters that are illegal in filenames on certain
+     * operating systems and special characters requiring special escaping
+     * to manipulate at the command line. Replaces spaces and consecutive
+     * dashes with a single dash. Trim period, dash and underscore from beginning
+     * and end of filename.
+     *
+     * @author WordPress
+     *
+     * @param string $filename The filename to be sanitized
+     * @return string The sanitized filename
+     */
+    protected function sanitize_file_name($filename)
+    {
+        $special_chars = array("?", "[", "]", "/", "\\", "=", "<", ">", ":", ";", ",", "'", "\"", "&", "$", "#", "*", "(", ")", "|", "~", "`", "!", "{", "}");
+        $filename = str_replace($special_chars, '', $filename);
+        $filename = preg_replace('/[\s-]+/', '-', $filename);
+        $filename = trim($filename, '.-_');
+        return $filename;
+    }
 
-		// try a shell command
-		if ($exec_works) {
-			$cmd = ($iswin) ? "for %F in (\"$file\") do @echo %~zF" : "stat -c%s \"$file\"";
-			@exec($cmd, $output);
-			if (is_array($output) && ctype_digit($size = trim(implode("\n", $output)))) {
-				return $size;
-			}
-		}
 
-		// try the Windows COM interface
-		if ($iswin && class_exists("COM")) {
-			try {
-				$fsobj = new COM('Scripting.FileSystemObject');
-				$f = $fsobj->GetFile( realpath($file) );
-				$size = $f->Size;
-			} catch (Exception $e) {
-				$size = null;
-			}
-			if (ctype_digit($size)) {
-				return $size;
-			}
-		}
+    /**
+     * Concise way to recursively remove a directory
+     * http://www.php.net/manual/en/function.rmdir.php#108113
+     *
+     * @param string $dir Directory to remove
+     */
+    protected function rrmdir($dir)
+    {
+        foreach (glob($dir . '/*') as $file) {
+            if (is_dir($file))
+                $this->rrmdir($file);
+            else
+                unlink($file);
+        }
+        rmdir($dir);
+    }
 
-		// if all else fails
-		return filesize($file);
-	}
+    /**
+     * PHPs filesize() fails to measure files larger than 2gb
+     * http://stackoverflow.com/a/5502328/189673
+     *
+     * @param string $file Path to the file to measure
+     * @return int
+     */
+    protected function filesize($file)
+    {
+        static $iswin;
+        if (!isset($iswin)) {
+            $iswin = (strtoupper(substr(PHP_OS, 0, 3)) == 'WIN');
+        }
+
+        static $exec_works;
+        if (!isset($exec_works)) {
+            $exec_works = (function_exists('exec') && !ini_get('safe_mode') && @exec('echo EXEC') == 'EXEC');
+        }
+
+        // try a shell command
+        if ($exec_works) {
+            $cmd = ($iswin) ? "for %F in (\"$file\") do @echo %~zF" : "stat -c%s \"$file\"";
+            @exec($cmd, $output);
+            if (is_array($output) && ctype_digit($size = trim(implode("\n", $output)))) {
+                return $size;
+            }
+        }
+
+        // try the Windows COM interface
+        if ($iswin && class_exists("COM")) {
+            try {
+                $fsobj = new COM('Scripting.FileSystemObject');
+                $f = $fsobj->GetFile(realpath($file));
+                $size = $f->Size;
+            } catch (Exception $e) {
+                $size = null;
+            }
+            if (ctype_digit($size)) {
+                return $size;
+            }
+        }
+
+        // if all else fails
+        return filesize($file);
+    }
 }
 
