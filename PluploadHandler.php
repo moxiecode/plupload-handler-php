@@ -145,13 +145,13 @@ class PluploadHandler
             }
 
             $this->unlockTheFile($file_name);
-
             return $result;
-
-        } catch (Exception $ex) {
+        }
+        catch (Exception $ex)
+        {
             $this->error = $ex->getCode();
 			$this->log("ERROR: " . $this->getErrorMessage());
-            $this->unlock_file($file_name);
+            $this->unlockTheFile($file_name);
             return false;
         }
     }
