@@ -8,7 +8,7 @@ $ph = new PluploadHandler(array(
 ));
 
 $ph->sendNoCacheHeaders();
-$ph->sendCorsHeaders();
+$ph->sendCORSHeaders();
 
 if ($result = $ph->handleUpload()) {
 	die(json_encode(array(

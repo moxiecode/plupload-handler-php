@@ -458,7 +458,7 @@ class PluploadHandler
      * @param array $headers Additional headers to send out
      * @param string [$origin='*'] Allowed origin
      */
-    function sendCorsHeaders($headers = array(), $origin = '*')
+    function sendCORSHeaders($headers = array(), $origin = '*')
     {
         $allow_origin_present = false;
 
