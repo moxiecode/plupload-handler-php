@@ -7,10 +7,10 @@ $ph = new PluploadHandler(array(
 	'allow_extensions' => 'jpg,jpeg,png'
 ));
 
-$ph->send_nocache_headers();
-$ph->send_cors_headers();
+$ph->sendNoCacheHeaders();
+$ph->sendCORSHeaders();
 
-if ($result = $ph->handle_upload()) {
+if ($result = $ph->handleUpload()) {
 	die(json_encode(array(
 		'OK' => 1,
 		'info' => $result
@@ -19,8 +19,8 @@ if ($result = $ph->handle_upload()) {
 	die(json_encode(array(
 		'OK' => 0,
 		'error' => array(
-			'code' => $ph->get_error_code(),
-			'message' => $ph->get_error_message()
+			'code' => $ph->getErrorCode(),
+			'message' => $ph->getErrorMessage()
 		)
 	)));
 }
