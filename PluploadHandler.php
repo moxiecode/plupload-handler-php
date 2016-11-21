@@ -33,7 +33,7 @@ class PluploadHandler
                 'combine_chunks_on_complete' => true,
                 'file_name' => isset($_REQUEST['name']) ? $_REQUEST['name'] : false,
                 'allow_extensions' => false,
-                'delay' => 0,
+                'delay' => 0, // in seconds
                 'cb_sanitize_file_name' => array($this, 'sanitize_file_name'),
                 'cb_check_file' => false,
                 'cb_filesize' => array($this, 'filesize'),
@@ -45,7 +45,9 @@ class PluploadHandler
                     PLUPLOAD_TYPE_ERR => "File type not allowed.",
                     PLUPLOAD_UNKNOWN_ERR => "Failed due to unknown error.",
                     PLUPLOAD_SECURITY_ERR => "File didn't pass security check."
-                )
+                ),
+				'debug' => false,
+				'log_path' => "error.log"
             ),
             $conf
         );
@@ -75,7 +77,7 @@ class PluploadHandler
 
             // Fake network congestion
             if ($conf['delay']) {
-                usleep($conf['delay']);
+                usleep($conf['delay'] * pow(10, 6));
             }
 
             if (is_callable($conf['cb_sanitize_file_name'])) {
@@ -95,6 +97,8 @@ class PluploadHandler
                 }
             }
 
+			$this->log("$file_name received" . ($conf['chunks'] ? ", chunks enabled: {$conf['chunk']} of {$conf['chunks']}" : ''));
+
             // Write file or chunk to appropriate temp location
             if ($conf['chunks']) {
                 return $this->handle_chunk($conf['chunk'], $file_name);
@@ -103,6 +107,9 @@ class PluploadHandler
             }
         } catch (Exception $ex) {
             $this->error = $ex->getCode();
+
+			$this->log("ERROR: " . $this->get_error_message());
+
             return false;
         }
     }
@@ -161,6 +168,11 @@ class PluploadHandler
     {
         $file_path = $this->get_target_path_for($file_name);
 
+		$this->log($this->conf['append_chunks_to_target']
+			? "chunks being appended directly to the target $file_path.part"
+			: "standalone chunks being written to $file_path.dir.part"
+		);
+
         if ($this->conf['append_chunks_to_target']) {
             $chunk_path = $this->write_upload_to("$file_path.part", false, 'ab');
 
@@ -204,6 +216,8 @@ class PluploadHandler
         }
 
         if (rename($tmp_path, $file_path)) {
+			$this->log("$tmp_path successfully renamed to $file_path");
+
             return array(
                 'name' => basename($file_path),
                 'path' => $file_path,
@@ -254,7 +268,6 @@ class PluploadHandler
         }
 
         if (!$in = @fopen($source_path, "rb")) {
-            die('hey');
             throw new Exception('', PLUPLOAD_INPUT_ERR);
         }
 
@@ -264,6 +277,8 @@ class PluploadHandler
 
         @fclose($out);
         @fclose($in);
+
+		$this->log("$source_path " . ($mode == 'wb' ? "written" : "appended") . " to $target_path");
 
         return $target_path;
     }
@@ -301,6 +316,8 @@ class PluploadHandler
         }
         @fclose($out);
 
+		$this->log("$chunk_dir combined into $file_path");
+
         // Cleanup
         if ($this->conf['cleanup']) {
             $this->rrmdir($chunk_dir);
@@ -312,12 +329,22 @@ class PluploadHandler
     protected function is_last_chunk($file_name)
     {
         if ($this->conf['append_chunks_to_target']) {
-            return $this->conf['chunks'] && $this->conf['chunks'] == $this->conf['chunk'] + 1;
+            $result = $this->conf['chunks'] && $this->conf['chunks'] == $this->conf['chunk'] + 1;
+
+			if ($result) {
+				$this->log("last chunk received: $chunks out of {$this->conf['chunks']}");
+			}
         } else {
             $file_path = $this->get_target_path_for($file_name);
             $chunks = glob("$file_path.dir.part/*.part");
-            return sizeof($chunks) == $this->conf['chunks'];
+            $result = sizeof($chunks) == $this->conf['chunks'];
+
+			if ($result) {
+				$this->log("seems like last chunk, 'cause there are $chunks out of {$this->conf['chunks']} *.part files in $file_path.dir.part.");
+			}
         }
+
+		return $result;
     }
 
 
@@ -335,7 +362,7 @@ class PluploadHandler
 
     function get_target_path_for($file_name)
     {
-        return rtrim($this->conf['target_dir'], DS) . DS . $file_name;
+        return rtrim($this->conf['target_dir'], "/\\") . DS . $file_name;
     }
 
 
@@ -479,5 +506,16 @@ class PluploadHandler
         // if all else fails
         return filesize($file);
     }
+
+
+	function log($msg)
+	{
+		if (!$this->conf['debug']) {
+			return;
+		}
+
+		$msg = date("Y-m-d H:i:s") . ": $msg\n";
+		file_put_contents($this->conf['log_path'], $msg, FILE_APPEND);
+	}
 }
 
