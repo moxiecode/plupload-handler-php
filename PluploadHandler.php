@@ -385,9 +385,9 @@ class PluploadHandler
     protected function isLastChunk($file_name)
     {
         if ($this->conf['append_chunks_to_target']) {
-            if ($result = $this->conf['chunks'] && $this->conf['chunks'] == $this->conf['chunk'] + 1) {
-                $this->log("last chunk received: $chunks out of {$this->conf['chunks']}");
-            }
+			if ($result = $this->conf['chunks'] && $this->conf['chunks'] == $this->conf['chunk'] + 1) {
+				$this->log("last chunk received: {$this->conf['chunks']} out of {$this->conf['chunks']}");
+			}
         } else {
             $file_path = $this->getTargetPathFor($file_name);
             $chunks = sizeof(glob("$file_path.dir.part/*.part"));
